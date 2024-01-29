@@ -1,0 +1,13 @@
+name: snippy
+channels:
+        - conda-forge
+        - bioconda
+        - defaults
+dependencies:
+        - snippy
+        - minimap2
+        - samtools
+        - biopython
+        - pandas
+        - pysamstats
+        - tabixpp==1.1.0
