@@ -23,10 +23,30 @@ process DOWNOAD {
     """
 }
 
+process REFMASK {
+    label 'blast'
+    publishDir "refmask", mode: "copy"
+
+    input:
+	path(refFasta)
+
+	output:
+    path("${refFasta.baseName}.rpt_mask.gz"), emit: masked_ref
+    
+
+	script:
+	"""
+    makeblastdb -dbtype nucl -in ${refFasta}
+    genRefMask.py -r ${refFasta} -m 200 -p 95
+    bgzip -c ${refFasta}.rpt.regions > ${refFasta.baseName}.rpt_mask.gz
+	echo '##INFO=<ID=RPT,Number=1,Type=Integer,Description="Flag for variant in repetitive region">' > ${refFasta.baseName}.rpt_mask.hdr
+	tabix -s1 -b2 -e3 ${refFasta.baseName}.rpt_mask.gz
+    """
+}
+
 process SNIPPY {
     tag { sample }
     //scratch 'true'
-
     label 'snippy'
 
     //publishDir "fasta/", mode: 'copy', saveAs: { filename -> "${sample}.fasta"} 
@@ -81,16 +101,44 @@ process MASKDEPTH {
 
 
     input:
-    tuple val(sample), path('unmasked.fa'), path('pysamfile.txt')
+    tuple val(sample), path('unmasked.fa'), path('pysamfile.txt'), path('masked_ref.bed.gz')
 
     output:
-    tuple val(sample), path("${sample}.fasta"), emit: fasta
+    path("${sample}.fasta"), emit: fasta
     tuple val(sample), path("depthStats.csv"), emit: csv
 
 
     script:
     """
-    maskDepth.py -p pysamfile.txt -f unmasked.fa -o ${sample}.fasta -d 10 -mw 0.8 -r NC_011035.1:${sample}_illumina
+    maskDepth.py -p pysamfile.txt \
+        -f unmasked.fa \
+        -o ${sample}.fasta \
+        -d 10 -mw 0.8 \
+        -b masked_ref.bed.gz \
+        -r NZ_CP007601.1:${sample}_illumina
+    """
+}
+
+process SNP_DISTS {
+    tag { "create a pairwise SNP matrix" }
+
+    label 'snpdist'
+    publishDir "snp-dists", mode: "copy"
+
+    input:
+    path(nonrec)
+
+    output:
+    path("*")
+    //path("${nonrec}.snp-dists.tsv"), snp_matrix_tsv
+    //path("${nonrec}.snp-dists.csv"), snp_matrix_csv
+    //path("${nonrec}.snp-dists_molten.csv"), snp_matrix_molten
+
+    script:
+    """
+    snp-dists ${nonrec} > ${nonrec}.snp-dists.tsv
+    snp-dists -c ${nonrec} > ${nonrec}.snp-dists.csv
+    snp-dists -c ${nonrec} -m > ${nonrec}.snp-dists_molten.csv
     """
 }
 
@@ -115,10 +163,21 @@ Channel.fromPath(params.ref)
 
      DOWNOAD(illumina_fqs)
 
+     REFMASK(reference_genome)
+
      SNIPPY(DOWNOAD.out.fqs, reference_genome)
 
      DEPTH(SNIPPY.out.bam, reference_genome)
 
-     MASKDEPTH(SNIPPY.out.correctedRef.combine(DEPTH.out, by:0))
-}
+     MASKDEPTH(SNIPPY.out.correctedRef.combine(DEPTH.out, by:0).combine(REFMASK.out.masked_ref))
+
+     //comine masked fasta output into a single file
+    MASKDEPTH.out.fasta.view()
+        .view()
+        .collectFile(name: 'all_masked.fasta')
+        .set{masked}  
+
+    SNP_DISTS(masked)
+
+ }
 

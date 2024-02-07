@@ -8,10 +8,11 @@ import numpy as np
 import pandas as pd
 
 class depthMasker:
-    def __init__(self, fasta, output, pysamstats, depth, mw,mask='N', renamer=None):
+    def __init__(self, fasta, output, pysamstats, depth, mw, repeatsBed,mask='N', renamer=None):
         self.fasta = fasta
         self.output = output
         self.pysamstats = pysamstats
+        self.repeatsBed = repeatsBed
         self.depth = depth
         self.mask = mask
         self.maskWeak = mw
@@ -24,6 +25,7 @@ class depthMasker:
         self.loadDepth()
         self.loadFasta()
         self.maskDepth()
+        self.maskRepeats()
         self.makeOutput()
         self.depthStats()
 
@@ -77,6 +79,15 @@ class depthMasker:
         print(df[df['ps']<0.80])
         self.df=df
 
+    def maskRepeats(self):
+        '''Mask regions in dataframe with N that are repeats based on BED file coordinates'''
+        df=self.df
+        repeats=pd.read_csv(self.repeatsBed,sep='\t',header=None, comment='#')
+        repeats.columns=['chrom','start','end', 'rpt']
+        for index, row in repeats.iterrows():
+            df.loc[(df['chrom']==row['chrom']) & (df['pos']>=row['start']) & (df['pos']<=row['end']),'seq']=self.mask
+        self.df=df
+        
     def _getSeqs(self):
         chroms=list(self.df['chrom'].unique())
         for chrom in chroms:
@@ -93,7 +104,8 @@ class depthMasker:
         SeqIO.write(_seqs, self.output, 'fasta')
 
 def run(opts):
-    dm=depthMasker(opts.fasta,opts.output, opts.pysamstats, opts.depth,opts.maskWeak,renamer=opts.renamer)
+    dm=depthMasker(opts.fasta,opts.output, opts.pysamstats, opts.depth,
+                   opts.maskWeak,opts.repeatsBed, renamer=opts.renamer)
     dm.run()
 
 if __name__ == "__main__":
@@ -102,6 +114,8 @@ if __name__ == "__main__":
             help='pysam stats file')
     parser.add_argument('-f', '--fasta', required=True,
             help='input fasta')
+    parser.add_argument('-b', '--repeatsBed', required=True,
+            help='input bed file of repeats to mask')
     parser.add_argument('-o', '--output', required=True,
             help='output fasta')
     parser.add_argument('-d', '--depth', required=True,
